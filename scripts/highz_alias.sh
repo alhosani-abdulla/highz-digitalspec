@@ -4,7 +4,7 @@
 alias TakeSpecs='cd ~/highz-digitalspec && pipenv run python src/run_spectrometer.py'
 
 # Navigate to the data storage directory (update path as needed)
-alias GetSpecs='cd /home/peterson/spectrometer_data'
+alias GetSpecs='cd /home/peterson/Data/INDURANCE'
 
 # Quick way to enter the spectrometer virtual environment
 alias SpecShell='cd ~/highz-digitalspec && pipenv shell'
