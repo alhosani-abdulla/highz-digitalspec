@@ -38,7 +38,7 @@ CAL_ACC_N = 15                # Number of spectra per calibration state per cycl
 ANT_ACC_N = 15                # Number of spectra for antenna state per cycle
 FB_N = 0                      # Number of spectra for filter bank calibration
 SAVE_EACH_ACC = False         # True: save each accumulation, False: sum accumulations
-SAVE_DATA = False             # True: save data to disk, False: run without saving
+SAVE_DATA = True              # True: save data to disk, False: run without saving
 
 # The time in seconds for one accumulation. Skips one accumulation when switching states.
 SWITCH_DELAY = ACC_LENGTH * 3 / 100000 
