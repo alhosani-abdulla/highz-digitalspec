@@ -21,7 +21,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.abspath(os.path.join(script_dir, '../'))
 # Update the subfolder and filename as needed:
 CONFIG_PATH = os.path.join(repo_root, 'fpga_config', '03-11-2025', 'v26.fpg')
-BASE_PATH = '/media/peterson'  # Path to external storage for data
+BASE_PATH = '/home/peterson/Data'  # Path to external storage for data
 
 # Acquisition and instrument parameters
 FPGA_IP = '169.254.2.181'    # FPGA IP address (link local address when connected via ethernet)
