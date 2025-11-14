@@ -5,6 +5,7 @@ import os
 import time
 import struct
 import argparse
+import re
 from datetime import datetime
 
 # Third-party imports
@@ -48,6 +49,52 @@ SWITCH_DELAY = ACC_LENGTH * 3 / 100000
 
 ########################################################################
 
+# Helper function to work around casperfpga RFDC status parsing bug
+def get_adc_status(adc):
+  """
+  Get ADC status with workaround for casperfpga parsing bug.
+  The RFSoC firmware returns format like "ADC0: Enabled 1, State: 15 PLL: 1"
+  but casperfpga expects "ADC0: Enabled 1 State 15 PLL 1" (no colons in values).
+  
+  This function parses the response correctly and returns a formatted string.
+  """
+  import re
+  
+  try:
+    # Get raw katcp transport and make request directly
+    t = adc.parent.transport
+    reply, informs = t.katcprequest(name='rfdc-status', request_timeout=t._timeout)
+    
+    status_str = "ADC/DAC Status:\n"
+    
+    for inform in informs:
+      if inform.arguments:
+        arg_str = inform.arguments[0].decode()
+        # Parse: "ADC0: Enabled 1, State: 15 PLL: 1"
+        info = arg_str.split(': ', 1)
+        tile = info[0]
+        
+        if len(info) > 1:
+          # Use regex to extract all key-value pairs
+          rest = info[1]
+          pattern = r'(\w+):\s*(\d+)|(\w+)\s+(\d+)'
+          values = {}
+          
+          for match in re.finditer(pattern, rest):
+            if match.group(1):  # "key: value" format
+              k, v = match.group(1), match.group(2)
+            else:  # "key value" format
+              k, v = match.group(3), match.group(4)
+            values[k] = int(v)
+          
+          # Format nicely
+          value_str = ', '.join([f'{k}: {v}' for k, v in values.items()])
+          status_str += f"  {tile}: {value_str}\n"
+    
+    return status_str
+    
+  except Exception as e:
+    return f"Could not read ADC status: {e}\n"
 
 def initialize_fpga():
   """
@@ -64,7 +111,8 @@ def initialize_fpga():
 
     adc = fpga.adcs['rfdc']
     adc.init()
-    print(adc.status())
+    # Use workaround function to read ADC status instead of adc.status()
+    print(get_adc_status(adc))
 
     c = adc.show_clk_files()
     adc.progpll('lmk', c[1])
