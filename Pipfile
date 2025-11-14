@@ -8,6 +8,8 @@ numpy = "*"
 gpiozero = "*"
 casperfpga = {git = "git+https://github.com/casper-astro/casperfpga.git#egg=casperfpga"}
 python-utils = "*"
+"rpi.gpio" = "*"
+pigpio = "*"
 
 [dev-packages]
 
