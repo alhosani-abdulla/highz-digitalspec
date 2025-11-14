@@ -24,7 +24,7 @@ CONFIG_PATH = os.path.join(repo_root, 'fpga_config', '03-11-2025', 'v26.fpg')
 BASE_PATH = '/media/peterson'  # Path to external storage for data
 
 # Acquisition and instrument parameters
-FPGA_IP = '169.254.223.21'   # FPGA IP address (link local address when connected via ethernet)
+FPGA_IP = '169.254.2.181'    # FPGA IP address (link local address when connected via ethernet)
 ANTENNA = '1'                # Antenna identifier
 
 # FFT parameters
