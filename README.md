@@ -189,6 +189,108 @@ All sub-dependencies are automatically managed by pipenv and locked in `Pipfile.
 
 ## Troubleshooting
 
+### FPGA/RFSoC Connection Troubleshooting
+
+#### Finding the RFSoC IP Address via Serial Console
+
+If the FPGA is not responding to its expected IP address, you can access it directly via serial connection:
+
+**Prerequisites:**
+- USB-to-Serial adapter (typically /dev/ttyUSB0 or /dev/ttyUSB1)
+- `minicom` or similar serial terminal software
+- Physical access to the RFSoC board
+
+**Steps:**
+
+1. **Install minicom** (if needed):
+   ```bash
+   sudo apt-get install minicom
+   ```
+
+2. **Identify the serial port**:
+   ```bash
+   ls /dev/ttyUSB*
+   ```
+   Usually `/dev/ttyUSB0` or `/dev/ttyUSB1`
+
+3. **Connect to the RFSoC via serial**:
+   ```bash
+   minicom -D /dev/ttyUSB1 -b 115200
+   ```
+   
+   Parameters:
+   - `-D /dev/ttyUSB1`: Serial port
+   - `-b 115200`: Baud rate (8 data bits, 1 stop bit, no parity by default)
+
+4. **Once connected**, press Enter to see the boot messages and access the shell:
+   - You should see the Linux kernel boot output
+   - Eventually get a login prompt
+   - **RFSoC Linux Shell Credentials:**
+     - Username: `casper`
+     - Password: `casper`
+
+5. **Find the IP address**:
+   ```bash
+   ifconfig
+   ```
+   or
+   ```bash
+   ip addr
+   ```
+   
+   Look for the Ethernet interface (usually `eth0` or `enp0s...`). Common IP address ranges:
+   - **Link-local** (auto-assigned): `169.254.x.x` - indicates no DHCP server
+   - **Static/DHCP**: Check if an IP is assigned in the expected subnet
+
+6. **Exit minicom**: Press `Ctrl+A` then `X` to exit
+
+**Example session:**
+```
+Connected to minicom. Press Ctrl+A Z for help
+
+[Linux boot messages...]
+
+root@rfsoc:~# ifconfig
+eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST> mtu 1500
+      inet 169.254.2.181  netmask 255.255.0.0
+      inet6 fe80::xxx:xxx:xxx  prefixlen 64  scopeid 0x20<link>
+      ...
+
+root@rfsoc:~# exit
+```
+
+#### Connecting to Link-Local IP Address
+
+If the RFSoC has a link-local address (169.254.x.x), you need to:
+
+1. **Configure your Raspberry Pi's Ethernet interface** with a compatible link-local address:
+   ```bash
+   sudo ifconfig eth0 169.254.1.1 netmask 255.255.0.0
+   ```
+
+2. **Verify connectivity**:
+   ```bash
+   ping 169.254.2.181
+   ```
+
+3. **Test FPGA connection** (once you have Python environment set up):
+   ```bash
+   pipenv run python -c "import casperfpga; fpga = casperfpga.CasperFpga('169.254.2.181', timeout=10); print('Connected!')"
+   ```
+
+#### ADC Status Parsing Error
+
+**Error message:**
+```
+ValueError: not enough values to unpack (expected 2, got 1)
+```
+
+**Cause:** The casperfpga library's RFDC parser expects ADC status in format `ADC0: Enabled 1 State 15 PLL 1` but the RFSoC firmware returns `ADC0: Enabled 1, State: 15 PLL: 1` (with colons and commas).
+
+**Solution:** This is already fixed in the current version. The `get_adc_status()` function in `run_spectrometer.py` handles both formats correctly by parsing the raw KATCP response with regex pattern matching.
+
+**If you upgrade casperfpga**, re-apply the fix by ensuring `get_adc_status()` is used instead of `adc.status()`.
+
 ### Python Import Errors
 If you get import errors, ensure you're running within the pipenv environment:
 ```bash
@@ -199,6 +301,7 @@ pipenv run python your_script.py
 - Verify FPGA IP address matches `FPGA_IP` in configuration
 - Check Ethernet connection (should be direct connection for link-local addressing)
 - Ensure FPGA is powered and programmed with correct bitstream
+- Use serial console (see above) to verify RFSoC boot and IP configuration
 
 ### GPIO Permission Issues
 Add user to gpio group:
@@ -206,6 +309,52 @@ Add user to gpio group:
 sudo usermod -a -G gpio $USER
 ```
 Log out and back in for changes to take effect.
+
+### X11 Forwarding Issues (Remote Plotting/Visualization)
+
+**Error message:**
+```
+Unexpected error: no display name and no $DISPLAY environment variable
+```
+
+**Cause:** X11 forwarding not properly configured for SSH connection.
+
+**Solution:**
+
+1. **On your Mac**: Start XQuartz before SSH'ing:
+   ```bash
+   open -a XQuartz
+   ```
+
+2. **Connect to RPi with X11 forwarding enabled**:
+   ```bash
+   ssh -Y peterson@<rpi-hostname>
+   ```
+   
+   The `-Y` flag enables trusted X11 forwarding (recommended for local networks).
+
+3. **Verify DISPLAY is set**:
+   ```bash
+   echo $DISPLAY
+   # Should show something like: localhost:10.0
+   ```
+
+4. **Now run visualization tools**:
+   ```bash
+   ViewSpecs  # Real-time spectrum viewer
+   ```
+
+**Persistent configuration (optional):**
+Add to `~/.ssh/config` on your Mac to remember these settings:
+```
+Host highz-rpi-1
+    HostName <hostname-or-ip>
+    User peterson
+    ForwardX11 yes
+    ForwardX11Trusted yes
+```
+
+Then simply: `ssh highz-rpi-1`
 
 ## Development
 
