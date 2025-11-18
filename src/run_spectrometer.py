@@ -29,14 +29,14 @@ FPGA_IP = '169.254.2.181'    # FPGA IP address (link local address when connecte
 ANTENNA = '1'                # Antenna identifier
 
 # FFT parameters
-ACC_LENGTH = 8750            # Accumulation length (see notes below)
+ACC_LENGTH = 8750 * 2        # Accumulation length (see notes below)
 NCHANNELS = 4                # Number of channels
 NFFT = 32768                 # FFT length
 
 # Calibration and observation parameters
-CAL_ACC_N = 15                # Number of spectra per calibration state per cycle
-ANT_ACC_N = 15                # Number of spectra for antenna state per cycle
-FB_N = 0                      # Number of spectra for filter bank calibration
+CAL_ACC_N = 10                # Number of spectra per calibration state per cycle
+ANT_ACC_N = 10                # Number of spectra for antenna state per cycle
+FB_N = 7                      # Number of spectra for filter bank calibration
 SAVE_EACH_ACC = False         # True: save each accumulation, False: sum accumulations
 SAVE_DATA = True              # True: save data to disk, False: run without saving
 
@@ -171,18 +171,17 @@ def main():
       break
     else:
       #Digital Spectrometer Calibaration Sweep.
-      for s in range(2,11):
+      for s in range(2,10): # Calibration states 2-9
         spectra_n = CAL_ACC_N
-        if s == 8: # switching to open circuit
+        if s == 2: # switching to 6" shorted
+          rcal.gpio_switch(s, SWITCH_DELAY)
+          spectra_n = CAL_ACC_N + FB_N  # extra spectra for filter bank calibration
+        elif s == 8: # switching to open circuit
           rcal.gpio_switch(1, SWITCH_DELAY)
           s = 'OC'
         elif s == 9: # switching to state 0 (Antenna - Main Switch Powered)
           s = 0
           rcal.gpio_switch(s, SWITCH_DELAY)
-        elif s == 10: # Filter Bank Calibration State
-          rcal.gpio_switch(s, SWITCH_DELAY)
-          s = 'FB'
-          spectra_n = FB_N
         else:
           rcal.gpio_switch(s, SWITCH_DELAY) # Switching Calibration States
         
