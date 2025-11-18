@@ -278,6 +278,97 @@ If the RFSoC has a link-local address (169.254.x.x), you need to:
    pipenv run python -c "import casperfpga; fpga = casperfpga.CasperFpga('169.254.2.181', timeout=10); print('Connected!')"
    ```
 
+#### Persistent Ethernet Configuration for Link-Local RFSoC Communication
+
+**Issue Summary:** 
+When the RFSoC FPGA has a link-local address (169.254.2.181), the Raspberry Pi's eth0 interface must also be configured with a compatible link-local address (169.254.x.x/16). This configuration is not automatically assigned by DHCP and must be manually set via NetworkManager to persist across reboots.
+
+**Permanent Solution - NetworkManager Configuration:**
+
+1. **View current NetworkManager connections**:
+   ```bash
+   nmcli connection show
+   ```
+   You should see a connection named `eth0` for the Ethernet interface.
+
+2. **Configure the eth0 connection with manual IPv4 and link-local address**:
+   ```bash
+   sudo nmcli connection modify eth0 \
+     ipv4.method manual \
+     ipv4.addresses 169.254.1.1/16 \
+     connection.autoconnect yes \
+     connection.autoconnect-priority 100
+   ```
+
+3. **Reload NetworkManager** to apply changes:
+   ```bash
+   sudo nmcli connection reload
+   ```
+
+4. **Verify the configuration** is set correctly:
+   ```bash
+   nmcli connection show eth0 | grep -E "ipv4|autoconnect"
+   ```
+   
+   You should see:
+   ```
+   ipv4.method:                            manual
+   ipv4.addresses:                         169.254.1.1/16
+   connection.autoconnect:                 yes
+   connection.autoconnect-priority:        100
+   ```
+
+5. **Check that eth0 has the IPv4 address assigned**:
+   ```bash
+   ip addr show eth0
+   ```
+   
+   You should see:
+   ```
+   inet 169.254.1.1/16 brd 169.254.255.255 scope link noprefixroute eth0
+   ```
+
+6. **Test connectivity to RFSoC**:
+   ```bash
+   ping -c 2 169.254.2.181
+   ```
+
+**What These Settings Do:**
+- `ipv4.method manual` - Use static IPv4 instead of DHCP
+- `ipv4.addresses 169.254.1.1/16` - Set link-local address compatible with RFSoC's 169.254.2.181
+- `connection.autoconnect yes` - Automatically activate this connection on system boot
+- `connection.autoconnect-priority 100` - High priority ensures this connects first
+
+**Testing After Configuration:**
+To verify the setup works across reboots, test the spectrometer connection:
+```bash
+cd ~/highz-digitalspec
+pipenv run python -c "import casperfpga; fpga = casperfpga.CasperFpga('169.254.2.181', timeout=10); print('FPGA Connected Successfully!')"
+```
+
+**If You Need to Modify the Configuration Later:**
+```bash
+# Change the IPv4 address (e.g., to 169.254.2.1)
+sudo nmcli connection modify eth0 ipv4.addresses 169.254.2.1/16
+
+# Disable autoconnect
+sudo nmcli connection modify eth0 connection.autoconnect no
+
+# View full eth0 connection details
+nmcli connection show eth0
+
+# Reset eth0 back to DHCP
+sudo nmcli connection modify eth0 ipv4.method auto
+sudo nmcli connection reload
+```
+
+**Temporary Configuration (If You Don't Want to Make It Permanent):**
+If you only need link-local addressing for a single session, you can use:
+```bash
+sudo ip addr add 169.254.1.1/16 dev eth0
+```
+This does not persist across reboots.
+
 #### ADC Status Parsing Error
 
 **Error message:**
