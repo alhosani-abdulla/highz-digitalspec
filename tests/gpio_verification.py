@@ -71,7 +71,7 @@ test_results = {
     "passed": 0,
     "failed": 0,
     "errors": [],
-    "stats": defaultdict(lambda: {"readings": []}),
+    "stats": defaultdict(list),
 }
 
 
@@ -259,8 +259,8 @@ def print_statistics():
     print(f"\nPin State Statistics:")
     for pin in [16, 20, 21]:
         key = f"pin_{pin}"
-        if key in test_results["stats"] and test_results["stats"][key]["readings"]:
-            readings = test_results["stats"][key]["readings"]
+        if key in test_results["stats"] and test_results["stats"][key]:
+            readings = test_results["stats"][key]
             high_count = sum(readings)
             low_count = len(readings) - high_count
             high_pct = (high_count / len(readings) * 100) if readings else 0
