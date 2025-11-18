@@ -6,7 +6,7 @@ import time
 import struct
 import argparse
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Third-party imports
 import numpy as np
@@ -101,7 +101,7 @@ def initialize_fpga():
   Initialize the FPGA and ADC, program the bitstream, and set up clocks.
   Returns the fpga and adc objects.
   """
-  print(datetime.utcfromtimestamp(time.time()))
+  print(datetime.fromtimestamp(time.time(), tz=timezone.utc))
   rcal.gpio_switch(0, 2)
   try:
     print('Running Script ...')
@@ -242,7 +242,7 @@ def get_vacc_data(fpga):
   return interleave_q, fpga.read_uint('acc_cnt')
 
 def write_filename(state, acc_n):
-  basename = str(datetime.utcfromtimestamp(time.time()).strftime('%Y%m%d_%H%M%S') + f'_antenna{ANTENNA}_state{state}')
+  basename = str(datetime.fromtimestamp(time.time(), tz=timezone.utc).strftime('%Y%m%d_%H%M%S') + f'_antenna{ANTENNA}_state{state}')
   
   return f"{basename}_{acc_n}" if SAVE_EACH_ACC else basename
 
@@ -352,7 +352,7 @@ def get_sub_directory(parent_dir_path, sub_dir_count):
     """
 
     # Determine the unique subdirectory name
-    sub_dir_name = f"{datetime.utcfromtimestamp(time.time()).strftime('%H%M%S')}"
+    sub_dir_name = f"{datetime.fromtimestamp(time.time(), tz=timezone.utc).strftime('%H%M%S')}"
     sub_dir_path = os.path.join(parent_dir_path, sub_dir_name)
 
     # Create subdirectory if it doesn't exist
