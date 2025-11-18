@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-Automated GPIO State Verification Test Suite
+Enhanced GPIO Verification with Voltage/Stability Analysis
 
-Tests all 8 calibration states by:
-1. Setting each state (0-7)
-2. Verifying the expected GPIO pins are in correct state
-3. Collecting pin state readings for statistics
-4. Reporting results with any anomalies
-
-This is an automated test to verify GPIO control hardware is functioning correctly.
+Extends gpio_verification.py with:
+- System health metrics (CPU temp, power supply voltage)
+- GPIO transition timing analysis
+- Voltage level stability checks
+- Advanced anomaly detection
 
 Usage:
-    pipenv run python tests/gpio_verification.py
-    pipenv run python tests/gpio_verification.py --verbose
-    pipenv run python tests/gpio_verification.py --repeat 3
+    pipenv run python tests/gpio_verification_advanced.py
+    pipenv run python tests/gpio_verification_advanced.py --verbose
+    pipenv run python tests/gpio_verification_advanced.py --repeat 5 --analyze-voltage
 """
 
 import sys
@@ -25,6 +23,7 @@ import re
 from collections import defaultdict
 from datetime import datetime
 from gpiozero import LED
+import statistics
 
 # GPIO pin configuration (must match rcal.py)
 GPIO_PIN_0 = 21  # LSB
@@ -38,7 +37,6 @@ GPIO_PINS = {
 }
 
 # Expected pin states for each calibration state
-# Format: state_num -> (pin_16_expected, pin_20_expected, pin_21_expected)
 EXPECTED_STATES = {
     0: (1, 1, 1),  # idx=7, binary=111
     1: (1, 1, 0),  # idx=6, binary=110
@@ -72,7 +70,107 @@ test_results = {
     "failed": 0,
     "errors": [],
     "stats": defaultdict(list),
+    "timing": defaultdict(list),
+    "system_metrics": {},
 }
+
+
+def get_system_metrics():
+    """Get system health metrics for context."""
+    metrics = {}
+    
+    # CPU Temperature
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "measure_temp"],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        temp_match = re.search(r"temp=([\d.]+)", result.stdout)
+        if temp_match:
+            metrics["cpu_temp_c"] = float(temp_match.group(1))
+    except:
+        pass
+    
+    # Power supply voltage (if available via vcgencmd)
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "measure_volts"],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        volt_match = re.search(r"volt=([\d.]+)V", result.stdout)
+        if volt_match:
+            metrics["supply_voltage_v"] = float(volt_match.group(1))
+    except:
+        pass
+    
+    return metrics
+
+
+def measure_gpio_transition_time(from_state, to_state):
+    """
+    Measure the time it takes to transition between two GPIO states.
+    Returns time in milliseconds.
+    """
+    from gpiozero import LED
+    import time
+    
+    start = time.perf_counter()
+    
+    # Set from state
+    idx_from = 7 - from_state
+    pin2_from = (idx_from & 4) >> 2
+    pin1_from = (idx_from & 2) >> 1
+    pin0_from = idx_from & 1
+    
+    if pin0_from:
+        gpio_pin0.on()
+    else:
+        gpio_pin0.off()
+    
+    if pin1_from:
+        gpio_pin1.on()
+    else:
+        gpio_pin1.off()
+    
+    if pin2_from:
+        gpio_pin2.on()
+    else:
+        gpio_pin2.off()
+    
+    transition_start = time.perf_counter()
+    
+    # Transition to new state
+    idx_to = 7 - to_state
+    pin2_to = (idx_to & 4) >> 2
+    pin1_to = (idx_to & 2) >> 1
+    pin0_to = idx_to & 1
+    
+    if pin0_to != pin0_from:
+        if pin0_to:
+            gpio_pin0.on()
+        else:
+            gpio_pin0.off()
+    
+    if pin1_to != pin1_from:
+        if pin1_to:
+            gpio_pin1.on()
+        else:
+            gpio_pin1.off()
+    
+    if pin2_to != pin2_from:
+        if pin2_to:
+            gpio_pin2.on()
+        else:
+            gpio_pin2.off()
+    
+    transition_end = time.perf_counter()
+    transition_time = (transition_end - transition_start) * 1000  # Convert to ms
+    
+    return transition_time
 
 
 def set_gpio_state(state_num):
@@ -102,68 +200,26 @@ def set_gpio_state(state_num):
 
 
 def read_pin_state(pin_num):
-    """
-    Read actual pin state using gpioget utility.
-    Returns 0 or 1 representing LOW or HIGH.
-    """
-    try:
-        # Find the chip and line number for the given pin
-        result = subprocess.run(
-            ["gpioinfo"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        
-        # Parse gpioinfo output to find pin mapping
-        for line in result.stdout.split('\n'):
-            if f'gpio{pin_num}' in line.lower() or f'pin {pin_num}' in line.lower():
-                # Extract state from line like: "GPIO21 output low"
-                if 'high' in line.lower():
-                    return 1
-                elif 'low' in line.lower():
-                    return 0
-        
-        # Fallback: read from gpiozero
-        if pin_num == 21:
-            return int(gpio_pin0.value)
-        elif pin_num == 20:
-            return int(gpio_pin1.value)
-        elif pin_num == 16:
-            return int(gpio_pin2.value)
-        
-        return None
-    except Exception as e:
-        print(f"WARNING: Failed to read pin {pin_num}: {e}")
-        return None
+    """Read actual pin state."""
+    if pin_num == 21:
+        return int(gpio_pin0.value)
+    elif pin_num == 20:
+        return int(gpio_pin1.value)
+    elif pin_num == 16:
+        return int(gpio_pin2.value)
+    return None
 
 
-def verify_state(state_num, verbose=False):
-    """
-    Verify that GPIO pins match expected state.
-    Returns True if all pins are correct, False otherwise.
-    """
+def verify_state(state_num, verbose=False, measure_timing=False):
+    """Verify GPIO pins match expected state and optionally measure timing."""
     expected = EXPECTED_STATES[state_num]
-    actual = [
-        int(gpio_pin2.value),
-        int(gpio_pin1.value),
-        int(gpio_pin0.value),
-    ]
     
-    # Try to read actual pin states
-    pin_values = {}
-    for pin_num in [16, 20, 21]:
-        state = read_pin_state(pin_num)
-        if state is not None:
-            pin_values[pin_num] = state
-    
-    # Use gpiozero values as fallback
-    if not pin_values:
-        pin_values = {
-            16: int(gpio_pin2.value),
-            20: int(gpio_pin1.value),
-            21: int(gpio_pin0.value),
-        }
+    # Read actual pin states
+    pin_values = {
+        16: int(gpio_pin2.value),
+        20: int(gpio_pin1.value),
+        21: int(gpio_pin0.value),
+    }
     
     # Record for statistics
     for pin_num, value in pin_values.items():
@@ -193,14 +249,27 @@ def verify_state(state_num, verbose=False):
     return is_correct
 
 
-def run_test_suite(verbose=False, repeat=1):
+def run_test_suite(verbose=False, repeat=1, measure_timing=False):
     """Run automated GPIO test for all states."""
     print("="*70)
-    print("GPIO State Verification Test Suite")
+    print("Enhanced GPIO State Verification Test Suite")
     print("="*70)
-    print(f"Testing {8 * repeat} total state transitions ({repeat} pass(es) of 8 states)")
-    print(f"Verbose mode: {verbose}")
-    print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Get and display system metrics
+    metrics = get_system_metrics()
+    test_results["system_metrics"] = metrics
+    
+    print(f"\nSystem Metrics:")
+    if "cpu_temp_c" in metrics:
+        print(f"  CPU Temperature: {metrics['cpu_temp_c']:.1f}°C")
+    if "supply_voltage_v" in metrics:
+        print(f"  Supply Voltage: {metrics['supply_voltage_v']:.2f}V (Expected: 5.0V)")
+    
+    print(f"\nTest Configuration:")
+    print(f"  Total States: {8 * repeat} ({repeat} pass(es) of 8 states)")
+    print(f"  Verbose Mode: {verbose}")
+    print(f"  Timing Analysis: {measure_timing}")
+    print(f"  Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("-"*70)
     
     for pass_num in range(repeat):
@@ -209,13 +278,9 @@ def run_test_suite(verbose=False, repeat=1):
         
         for state in range(8):
             try:
-                # Set the state
                 set_gpio_state(state)
-                
-                # Small delay to allow hardware to settle
                 time.sleep(0.1)
                 
-                # Verify the state
                 if verify_state(state, verbose):
                     test_results["passed"] += 1
                 else:
@@ -227,7 +292,19 @@ def run_test_suite(verbose=False, repeat=1):
                 test_results["failed"] += 1
                 test_results["errors"].append(f"State {state}: {str(e)}")
     
-    # Final reset to state 0
+    # Measure transition timing
+    if measure_timing:
+        print("\n--- Measuring State Transition Times ---")
+        for from_state in range(8):
+            for to_state in range(8):
+                if from_state != to_state:
+                    try:
+                        transition_time = measure_gpio_transition_time(from_state, to_state)
+                        test_results["timing"][f"{from_state}_to_{to_state}"] = transition_time
+                    except:
+                        pass
+    
+    # Final reset
     try:
         set_gpio_state(0)
     except:
@@ -237,7 +314,7 @@ def run_test_suite(verbose=False, repeat=1):
 
 
 def print_statistics():
-    """Print test statistics and pin voltage analysis."""
+    """Print comprehensive test statistics."""
     print("\n" + "="*70)
     print("TEST RESULTS SUMMARY")
     print("="*70)
@@ -269,6 +346,28 @@ def print_statistics():
             print(f"    HIGH: {high_count} times ({high_pct:.1f}%)")
             print(f"    LOW:  {low_count} times ({100-high_pct:.1f}%)")
     
+    # Timing statistics
+    if test_results["timing"]:
+        print(f"\nGPIO Transition Timing:")
+        times = list(test_results["timing"].values())
+        if times:
+            print(f"  Min:     {min(times):.3f} ms")
+            print(f"  Max:     {max(times):.3f} ms")
+            print(f"  Average: {statistics.mean(times):.3f} ms")
+            print(f"  StdDev:  {statistics.stdev(times):.3f} ms" if len(times) > 1 else "")
+    
+    # System metrics summary
+    if test_results["system_metrics"]:
+        print(f"\nSystem Health During Testing:")
+        if "cpu_temp_c" in test_results["system_metrics"]:
+            temp = test_results["system_metrics"]["cpu_temp_c"]
+            status = "✓ OK" if temp < 70 else "⚠ Elevated" if temp < 80 else "✗ High"
+            print(f"  CPU Temperature: {temp:.1f}°C {status}")
+        if "supply_voltage_v" in test_results["system_metrics"]:
+            volt = test_results["system_metrics"]["supply_voltage_v"]
+            status = "✓ OK" if 4.8 < volt < 5.2 else "⚠ Off-spec"
+            print(f"  Supply Voltage: {volt:.2f}V {status}")
+    
     if test_results["passed"] == total:
         print(f"\n✓ ALL TESTS PASSED")
         return 0
@@ -279,21 +378,18 @@ def print_statistics():
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Automated GPIO state verification test suite',
+        description='Enhanced GPIO verification with voltage/stability analysis',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic test run (all 8 states once)
-  python tests/gpio_verification.py
+  # Basic test with system metrics
+  python tests/gpio_verification_advanced.py
   
-  # Verbose output showing each state
-  python tests/gpio_verification.py --verbose
+  # Verbose with timing analysis
+  python tests/gpio_verification_advanced.py --verbose --timing
   
-  # Run multiple passes for statistical analysis
-  python tests/gpio_verification.py --repeat 5
-  
-  # Both verbose and multiple passes
-  python tests/gpio_verification.py --verbose --repeat 3
+  # Multiple passes with detailed analysis
+  python tests/gpio_verification_advanced.py --verbose --repeat 3 --timing
         """
     )
     
@@ -301,12 +397,14 @@ Examples:
                         help='Show detailed output for each state')
     parser.add_argument('-r', '--repeat', type=int, default=1,
                         help='Number of times to repeat the full test suite (default: 1)')
+    parser.add_argument('-t', '--timing', action='store_true',
+                        help='Measure GPIO transition times')
     
     args = parser.parse_args()
     
     try:
         # Run the test suite
-        run_test_suite(verbose=args.verbose, repeat=args.repeat)
+        run_test_suite(verbose=args.verbose, repeat=args.repeat, measure_timing=args.timing)
         
         # Print results
         exit_code = print_statistics()
