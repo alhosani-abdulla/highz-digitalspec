@@ -1,11 +1,25 @@
 #!/bin/bash
-# Unified launcher script for digital spectrometer
-# This script sets up the environment and runs the spectrometer control software
-# Designed to be called from crontab at reboot: @reboot /home/peterson/highz-digitalspec/launcher.sh
+# Launcher script for digital spectrometer
+# Activates the pre-configured virtualenv and runs the spectrometer
+# Designed to be called from crontab at reboot: @reboot /home/peterson/highz-digitalspec/scripts/launcher.sh
+
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_DIR="$( dirname "$SCRIPT_DIR" )"
+
+# Get the original user's home directory (works with sudo)
+# If run with sudo, get the original user; otherwise use current HOME
+if [ -n "$SUDO_USER" ]; then
+    ORIGINAL_USER="$SUDO_USER"
+    ORIGINAL_HOME=$(eval echo "~$SUDO_USER")
+else
+    ORIGINAL_USER="${USER:-peterson}"
+    ORIGINAL_HOME="$HOME"
+fi
 
 # Configuration
-REPO_DIR="/home/peterson/highz-digitalspec"
-LOGDIR="/home/peterson/logs"
+VENV_PATH="$ORIGINAL_HOME/.local/share/virtualenvs/highz-digitalspec-gvua5dZu"
+LOGDIR="${INDURANCE_LOGS_DIR:-/media/peterson/INDURANCE/logs}"
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 LOGFILE="$LOGDIR/digital_spec_$TIMESTAMP.log"
 
@@ -22,32 +36,30 @@ log_message "========================================="
 log_message "Starting Digital Spectrometer"
 log_message "========================================="
 
-# Load pyenv if not already loaded
-export PYENV_ROOT="$HOME/.pyenv"
-if [ -d "$PYENV_ROOT/bin" ]; then
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init - bash)"
-    log_message "Loaded pyenv"
-fi
-
 # Change to repository directory
 cd "$REPO_DIR" || {
     log_message "ERROR: Failed to change to repository directory: $REPO_DIR"
     exit 1
 }
-log_message "Changed to repository directory: $REPO_DIR"
 
-# Verify Python version
-PYTHON_VERSION=$(python --version 2>&1)
-log_message "Python version: $PYTHON_VERSION"
+# Activate the virtualenv
+if [ ! -d "$VENV_PATH" ]; then
+    log_message "ERROR: virtualenv not found at: $VENV_PATH"
+    exit 1
+fi
 
-# Run the spectrometer using pipenv
+source "$VENV_PATH/bin/activate"
+log_message "Activated virtualenv: $VENV_PATH"
+log_message "Python version: $(python --version 2>&1)"
+log_message "Python path: $(which python)"
+
+# Run the spectrometer control software
 log_message "Starting spectrometer control software..."
 log_message "Output will be logged to: $LOGFILE"
 log_message "-----------------------------------------"
 
-# Run the Python script with pipenv and capture all output
-pipenv run python src/run_spectrometer.py >> "$LOGFILE" 2>&1
+# Run the Python script with unbuffered output
+python -u src/run_spectrometer.py >> "$LOGFILE" 2>&1
 EXIT_CODE=$?
 
 # Log completion status
