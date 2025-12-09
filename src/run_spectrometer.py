@@ -171,17 +171,11 @@ def main():
       break
     else:
       #Digital Spectrometer Calibaration Sweep.
-      for s in range(2,10): # Calibration states 2-9
+      for s in range(1,8): # Calibration states 1-7
         spectra_n = CAL_ACC_N
         if s == 2: # switching to 6" shorted
           rcal.gpio_switch(s, SWITCH_DELAY)
           spectra_n = CAL_ACC_N + FB_N  # extra spectra for filter bank calibration
-        elif s == 8: # switching to open circuit
-          rcal.gpio_switch(1, SWITCH_DELAY)
-          s = 'OC'
-        elif s == 9: # switching to state 0 (Antenna - Main Switch Powered)
-          s = 0
-          rcal.gpio_switch(s, SWITCH_DELAY)
         else:
           rcal.gpio_switch(s, SWITCH_DELAY) # Switching Calibration States
         
@@ -189,7 +183,7 @@ def main():
           data, name = save_all_data(fpga, switch_value=s)
 
       #Observing with the Antenna - collecting ant_acc_n spectras 
-      state = 1
+      state = 0
       rcal.gpio_switch(state, SWITCH_DELAY)
       for cnt in range(ANT_ACC_N):
         data, name = save_all_data(fpga, switch_value=state)
