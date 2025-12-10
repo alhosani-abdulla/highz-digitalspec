@@ -7,24 +7,32 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_DIR="$( dirname "$SCRIPT_DIR" )"
 
-# Get the original user's home directory (works with sudo)
-# If run with sudo, get the original user; otherwise use current HOME
-if [ -n "$SUDO_USER" ]; then
-    ORIGINAL_USER="$SUDO_USER"
-    ORIGINAL_HOME=$(eval echo "~$SUDO_USER")
-else
-    ORIGINAL_USER="${USER:-peterson}"
-    ORIGINAL_HOME="$HOME"
-fi
+# Get the user's home directory (for virtualenv location)
+# When run from sudo crontab, SUDO_USER is not set, so default to peterson
+TARGET_USER="${SUDO_USER:-peterson}"
+TARGET_HOME=$(eval echo "~$TARGET_USER")
 
 # Configuration
-VENV_PATH="$ORIGINAL_HOME/.local/share/virtualenvs/highz-digitalspec-gvua5dZu"
-LOGDIR="${INDURANCE_LOGS_DIR:-/media/peterson/INDURANCE/logs}"
+VENV_PATH="$TARGET_HOME/.local/share/virtualenvs/highz-digitalspec-gvua5dZu"
+PRIMARY_LOGDIR="/media/peterson/INDURANCE/logs"
+FALLBACK_LOGDIR="$TARGET_HOME/spectrometer_logs"
+
+# Check if INDURANCE is actually mounted (not just if directory exists)
+if mountpoint -q "/media/peterson/INDURANCE" 2>/dev/null; then
+    LOGDIR="$PRIMARY_LOGDIR"
+else
+    LOGDIR="$FALLBACK_LOGDIR"
+    echo "WARNING: INDURANCE storage not mounted, using fallback: $FALLBACK_LOGDIR" >&2
+fi
+
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 LOGFILE="$LOGDIR/digital_spec_$TIMESTAMP.log"
 
 # Create log directory if it doesn't exist
-mkdir -p "$LOGDIR"
+mkdir -p "$LOGDIR" 2>/dev/null || {
+    echo "ERROR: Could not create log directory: $LOGDIR" >&2
+    exit 1
+}
 
 # Function to log messages
 log_message() {

@@ -35,7 +35,7 @@ NFFT = 32768                 # FFT length
 
 # Calibration and observation parameters
 CAL_ACC_N = 10                # Number of spectra per calibration state per cycle
-ANT_ACC_N = 450               # Number of spectra for antenna state per cycle
+ANT_ACC_N = 10               # Number of spectra for antenna state per cycle
 FB_N = 7                      # Number of spectra for filter bank calibration
 SAVE_EACH_ACC = False         # True: save each accumulation, False: sum accumulations
 SAVE_DATA = True              # True: save data to disk, False: run without saving
