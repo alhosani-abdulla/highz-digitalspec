@@ -6,6 +6,7 @@ import time
 import struct
 import argparse
 import re
+import subprocess
 from datetime import datetime, timezone
 
 # Third-party imports
@@ -46,6 +47,42 @@ SWITCH_DELAY = ACC_LENGTH * 3 / 100000
 # =======================
 # End CONFIGURATION
 # =======================
+
+def is_storage_mounted(mount_path):
+  """
+  Check if storage device is actually mounted (not just if directory exists).
+  
+  Parameters:
+    mount_path (str): Path to check (e.g., '/media/peterson/INDURANCE')
+    
+  Returns:
+    bool: True if mounted, False if not mounted
+  """
+  try:
+    result = subprocess.run(
+      ['mountpoint', '-q', mount_path],
+      capture_output=True,
+      timeout=2
+    )
+    return result.returncode == 0
+  except Exception:
+    # Fallback: check if directory has contents (less reliable)
+    try:
+      return len(next(os.walk(mount_path))[1]) > 0
+    except:
+      return False
+
+def wait_for_storage(mount_path, check_interval=5):
+  """
+  Wait for storage device to be mounted.
+  
+  Parameters:
+    mount_path (str): Path to wait for
+    check_interval (int): Seconds between checks
+  """
+  while not is_storage_mounted(mount_path):
+    print(f'Storage {mount_path} not mounted. Waiting for drive...')
+    time.sleep(check_interval)
 
 ########################################################################
 
@@ -156,10 +193,8 @@ def main():
 
   # Main data acquisition loop
   while True:
-    # Check if storage device is attached!
-    while next(os.walk(BASE_PATH))[1] == []:
-      print('No drive attached. Please attach drive to continue taking data.')
-      time.sleep(5) #check every 5 seconds for an attached drive
+    # Check if storage device is mounted
+    wait_for_storage('/media/peterson/INDURANCE')
     
     acc_n = fpga.read_uint('acc_cnt')
     
@@ -254,11 +289,10 @@ def save_data(dataDict, filename):
     print(f"Data saving disabled. Would have saved: {filename}")
     return
   
+  # Wait for storage to be mounted
+  wait_for_storage('/media/peterson/INDURANCE')
+  
   dirnames = next(os.walk(BASE_PATH))[1]
-  while not dirnames:
-    print('No drive attached. Please attach a drive to continue taking data.')
-    time.sleep(5)
-    dirnames = next(os.walk(BASE_PATH))[1]
   dirname = dirnames[-1]
 
   # Determine the parent directory for this run
