@@ -7,6 +7,7 @@ import struct
 import argparse
 import re
 import subprocess
+import socket
 from datetime import datetime, timezone
 
 # Third-party imports
@@ -133,6 +134,115 @@ def get_adc_status(adc):
   except Exception as e:
     return f"Could not read ADC status: {e}\n"
 
+def discover_fpga_address(hardcoded_ip=FPGA_IP, hostname_hint='rfsoc', timeout=5):
+  """
+  Discover FPGA address using multiple methods with fallbacks.
+  
+  Tries in order:
+    1. Hostname hints ('rfsoc', 'localhost.localdomain', etc.)
+    2. Hardcoded IPv4 address with connectivity test
+    3. IPv6 link-local address discovery
+  
+  Parameters:
+    hardcoded_ip (str): Fallback IPv4 address (default: FPGA_IP config)
+    hostname_hint (str): Primary hostname to try resolving (e.g., 'rfsoc', 'localhost.localdomain')
+    timeout (int): Timeout in seconds for connection attempts
+    
+  Returns:
+    str: Working IP address for FPGA, or None if all methods fail
+  """
+  
+  # Build list of hostnames to try
+  hostnames_to_try = []
+  if hostname_hint:
+    hostnames_to_try.append(hostname_hint)
+  # Always try common RFSoC hostnames
+  hostnames_to_try.extend(['rfsoc', 'localhost.localdomain', 'localhost'])
+  
+  # Remove duplicates while preserving order
+  hostnames_to_try = list(dict.fromkeys(hostnames_to_try))
+  
+  # Method 1: Try hostname resolution
+  for hostname in hostnames_to_try:
+    try:
+      resolved_ip = socket.gethostbyname(hostname)
+      print(f"✓ Resolved hostname '{hostname}' to {resolved_ip}")
+      
+      # Quick connectivity test
+      try:
+        socket.create_connection((resolved_ip, 7147), timeout=timeout)  # KATCP default port
+        print(f"✓ FPGA responsive at {resolved_ip}")
+        return resolved_ip
+      except (socket.timeout, ConnectionRefusedError, OSError):
+        print(f"✗ {resolved_ip} not responding on KATCP port")
+    except socket.gaierror:
+      print(f"✗ Could not resolve hostname '{hostname}'")
+  
+  # Method 2: Try hardcoded IPv4 address
+  print(f"Attempting hardcoded IPv4 address: {hardcoded_ip}")
+  try:
+    socket.create_connection((hardcoded_ip, 7147), timeout=timeout)
+    print(f"✓ FPGA responsive at {hardcoded_ip}")
+    return hardcoded_ip
+  except (socket.timeout, ConnectionRefusedError, OSError) as e:
+    print(f"✗ Could not connect to {hardcoded_ip}: {e}")
+  
+  # Method 3: Try to find IPv6 link-local address via neighbor discovery
+  print("Attempting to discover IPv6 link-local address...")
+  try:
+    # Get list of network interfaces
+    result = subprocess.run(
+      ['ip', 'link', 'show'],
+      capture_output=True,
+      text=True,
+      timeout=timeout
+    )
+    
+    # Extract interface names (skip lo)
+    interfaces = re.findall(r'^(\d+):\s+(\S+):', result.stdout, re.MULTILINE)
+    interfaces = [iface for _, iface in interfaces if iface != 'lo' and not iface.startswith('docker')]
+    
+    if interfaces:
+      # Try to discover IPv6 neighbors on each interface
+      for iface in interfaces:
+        try:
+          # Use ping with IPv6 link-local all-nodes multicast to trigger neighbor discovery
+          subprocess.run(
+            ['ping', '-6', '-c', '1', 'ff02::1%' + iface],
+            capture_output=True,
+            timeout=2
+          )
+          
+          # Now query the neighbor table
+          result = subprocess.run(
+            ['ip', 'neigh', 'show'],
+            capture_output=True,
+            text=True,
+            timeout=timeout
+          )
+          
+          # Look for fe80:: addresses
+          ipv6_pattern = r'(fe80::[a-f0-9:]+)\s+dev\s+' + iface
+          matches = re.findall(ipv6_pattern, result.stdout)
+          
+          for ipv6_addr in matches:
+            # For link-local, must include interface scope
+            addr_with_scope = ipv6_addr + '%' + iface
+            print(f"  Trying IPv6 link-local: {addr_with_scope}")
+            try:
+              socket.create_connection((ipv6_addr, 7147, 0, iface), timeout=timeout)
+              print(f"✓ FPGA responsive at {ipv6_addr}")
+              return ipv6_addr
+            except (socket.timeout, ConnectionRefusedError, OSError, TypeError):
+              # TypeError occurs if socket doesn't support interface scope this way
+              continue
+        except Exception:
+          continue
+  except Exception as e:
+    print(f"✗ IPv6 discovery failed: {e}")
+  
+  return None
+
 def initialize_fpga():
   """
   Initialize the FPGA and ADC, program the bitstream, and set up clocks.
@@ -140,10 +250,37 @@ def initialize_fpga():
   """
   print(datetime.fromtimestamp(time.time(), tz=timezone.utc))
   rcal.gpio_switch(0, 2)
+  
+  # Discover FPGA address with retries
+  max_retries = 5
+  retry_delay = 5  # seconds
+  fpga_addr = None
+  
+  for attempt in range(max_retries):
+    print(f"\n=== FPGA Connection Attempt {attempt + 1}/{max_retries} ===")
+    fpga_addr = discover_fpga_address()
+    
+    if fpga_addr:
+      print(f"✓ Found FPGA at {fpga_addr}")
+      break
+    
+    if attempt < max_retries - 1:
+      print(f"✗ FPGA not found. Retrying in {retry_delay} seconds...")
+      time.sleep(retry_delay)
+  
+  if not fpga_addr:
+    print("✗ Failed to discover FPGA after all attempts")
+    print("Please check:")
+    print("  - FPGA is powered on and connected via ethernet")
+    print("  - Network connection is active")
+    print("  - Firewall is not blocking KATCP port 7147")
+    time.sleep(180)
+    os.system('sudo reboot')
+  
   try:
-    print('Running Script ...')
-    # Connect to the FPGA
-    fpga = casperfpga.CasperFpga(FPGA_IP)
+    print(f'Running Script ...')
+    # Connect to the FPGA using discovered address
+    fpga = casperfpga.CasperFpga(fpga_addr)
     fpga.upload_to_ram_and_program(CONFIG_PATH)
 
     adc = fpga.adcs['rfdc']
