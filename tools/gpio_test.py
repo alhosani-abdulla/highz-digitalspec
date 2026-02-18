@@ -56,7 +56,8 @@ def set_gpio_state(state_num):
     - Pin 20 (GPIO_PIN_1): Middle bit
     - Pin 16 (GPIO_PIN_2): MSB
     
-    The internal index is calculated as: idx = 7 - state_num
+    The internal index is calculated as: idx = 7 - state_num.
+    This is because the gpio states are sent to an inverting chip. 
     """
     if state_num < 0 or state_num > 7:
         print(f"ERROR: Invalid state {state_num}. Must be 0-7.")
