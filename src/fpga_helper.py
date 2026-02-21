@@ -60,7 +60,7 @@ def get_adc_status(adc):
     except Exception as e:
         return f"Could not read ADC status: {e}\n"
 
-def initialize_fpga() -> tuple[casperfpga.CasperFpga, casperfpga.RFDC]:
+def initialize_fpga() -> tuple:
     """
     Initialize the FPGA and ADC, gpio switch to state 0, discover FPGA address, 
     program the bitstream, and set up clocks.

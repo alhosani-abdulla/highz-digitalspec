@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 import numpy as np
 import rcal
 
-from .vars import * 
-from .fpga_helper import initialize_fpga, get_acc_cnt, get_vacc_data
+from vars import * 
+from fpga_helper import initialize_fpga, get_acc_cnt, get_vacc_data
 
 sum_spectrum = lambda spectrum: np.array([sum(x) for x in zip(*spectrum)], dtype=np.float64)
 
@@ -52,27 +52,24 @@ def wait_for_storage(mount_path, check_interval=5):
         print(f'Storage {mount_path} not mounted. Waiting for drive...')
         time.sleep(check_interval)
   
-def write_filename(state, acc_no):
+def write_filename(state, acc_no, antenna_no):
     """Generate a filename based on the current timestamp, antenna state, and accumulation number."""
     basename = str(datetime.fromtimestamp(time.time(), tz=timezone.utc).strftime(
-        '%Y%m%d_%H%M%S') + f'_antenna{ANTENNA}_state{state}')
+        '%Y%m%d_%H%M%S') + f'_antenna{antenna_no}_state{state}')
 
     return f"{basename}_{acc_no}" if SAVE_EACH_ACC else basename
 
 ########################################################################
 # Main function to take spectra in a loop, switching states and saving data
-def main(Antenna_no):
-    global cycle_count
-
-    # Initialize global variables
-    cycle_count = 0
+def main():
+    # Initialize state variables
     sub_dir_count = 0
-    
-    # Initialize FPGA and ADC
-    fpga, adc = initialize_fpga()
+    current_subdir = None
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='high-z digital spectrometer')
+    parser.add_argument('--antenna', type=int, help="Antenna Index (1-4)",
+                        required=True)
     parser.add_argument('--state', default=None, type=int,
                         help='switch state (0-10)')
     parser.add_argument('--run_dir', default=None,
@@ -80,11 +77,16 @@ def main(Antenna_no):
     args = parser.parse_args()
     print(f"Command line arguments: {args}")
     
+    # Initialize FPGA and ADC
+    fpga, adc = initialize_fpga()
+    
     input_state = args.state
     run_dir = args.run_dir
 
     # Main data acquisition loop
     while True:
+        need_new_subdir = True
+
         # Check if storage device is mounted
         wait_for_storage('/media/peterson/INDURANCE')
 
@@ -93,8 +95,17 @@ def main(Antenna_no):
         if input_state is not None:
             rcal.gpio_switch(input_state, SWITCH_DELAY)
             for n in range(100):  # collect 100 spectra in the specified state
-                _, _, sub_dir_count, acc_n = save_all_data(fpga, switch_value=input_state, sub_dir_count=sub_dir_count,
-                        last_acc_n=acc_n, run_dir=run_dir)
+                _, _, sub_dir_count, acc_n, current_subdir = save_all_data(
+                    fpga,
+                    switch_value=input_state,
+                    antenna_no=args.antenna,
+                    last_acc_n=acc_n,
+                    sub_dir_count=sub_dir_count,
+                    current_subdir=current_subdir,
+                    run_dir=run_dir,
+                    create_new_subdir=need_new_subdir,
+                )
+                need_new_subdir = False
             print(f'Completed data collection for state {input_state}. Exiting.')
             break
         else:
@@ -109,20 +120,30 @@ def main(Antenna_no):
                     rcal.gpio_switch(s, SWITCH_DELAY)
 
                 for n in range(spectra_n):
-                    _, _, sub_dir_count, acc_n = save_all_data(fpga, switch_value=s, sub_dir_count=sub_dir_count,
-                            last_acc_n=acc_n, run_dir=run_dir)
+                    _, _, sub_dir_count, acc_n, current_subdir = save_all_data(
+                        fpga, switch_value=s, antenna_no=args.antenna, 
+                        sub_dir_count=sub_dir_count,
+                        last_acc_n=acc_n,
+                        current_subdir=current_subdir,
+                        run_dir=run_dir,
+                        create_new_subdir=need_new_subdir)
+                    need_new_subdir = False
 
             # Observing with the Antenna - collecting ant_acc_n spectras
             state = 0
             rcal.gpio_switch(state, SWITCH_DELAY)
             for cnt in range(ANT_ACC_N):
-                _, _, sub_dir_count, acc_n = save_all_data(fpga, switch_value=state, sub_dir_count=sub_dir_count,
-                        last_acc_n=acc_n, run_dir=run_dir)
+                _, _, sub_dir_count, acc_n, current_subdir = save_all_data(
+                    fpga, switch_value=state, antenna_no=args.antenna, 
+                    sub_dir_count=sub_dir_count,
+                    last_acc_n=acc_n,
+                    current_subdir=current_subdir,
+                    run_dir=run_dir,
+                    create_new_subdir=need_new_subdir)
+                need_new_subdir = False
 
-        # Increment the cycle count after one full calibration + observation cycle
-        cycle_count += 1
-
-def save_data(dataDict, filename, sub_dir_count, run_dir=None) -> int:
+def save_data(dataDict, filename, sub_dir_count, current_subdir,
+              run_dir=None, create_new_subdir=False):
     """Save data into the appropriate directory.
     
     Returns:
@@ -131,14 +152,14 @@ def save_data(dataDict, filename, sub_dir_count, run_dir=None) -> int:
     # Skip saving if SAVE_DATA is False
     if not SAVE_DATA:
         print(f"Data saving disabled. Would have saved: {filename}")
-        return sub_dir_count
+        return sub_dir_count, current_subdir
 
     # Wait for storage to be mounted
     wait_for_storage('/media/peterson/INDURANCE')
 
     # Get the latest directory in the base path
     dirnames = next(os.walk(BASE_PATH))[1]
-    dirname = dirnames[-1]
+    dirname = sorted(dirnames)[-1]
 
     # Create parent directory for data if it doesn't exist
     parent_dir_name = run_dir if run_dir is not None else filename.split('_')[0]
@@ -147,24 +168,27 @@ def save_data(dataDict, filename, sub_dir_count, run_dir=None) -> int:
     if not os.path.exists(parent_dir_path):
         os.mkdir(parent_dir_path)
 
-    # Create a new subdirectory only after completing a cycle
-    if cycle_count >= 1 or current_sub_dir_path is None:
-        current_sub_dir_path, sub_dir_count = get_sub_directory(
+    # Create a new subdirectory once at the start of a data-collection cycle,
+    # or if no current subdirectory exists yet.
+    if current_subdir is None or create_new_subdir:
+        current_subdir, sub_dir_count = get_sub_directory(
             parent_dir_path, sub_dir_count)
-        cycle_count = 0  # Reset cycle count after creating a new subdirectory
 
     # Save the file in the appropriate directory
-    file_path = os.path.join(current_sub_dir_path, f"{filename}.npy")
+    file_path = os.path.join(current_subdir, f"{filename}.npy")
     np.save(file_path, dataDict, allow_pickle='False')
     print(f"Data saved to {file_path}")
-    return sub_dir_count
+    return sub_dir_count, current_subdir
 
-def save_all_data(fpga, switch_value, last_acc_n, sub_dir_count, run_dir):
+def save_all_data(fpga, switch_value, antenna_no,
+                  last_acc_n, sub_dir_count, current_subdir,
+                  run_dir, create_new_subdir=False):
     """Collect data from the FPGA, save it, and return the data dictionary and filename.
     
     Parameters:
         fpga: FPGA object to read from
         switch_value: The current state of the GPIO switch
+        antenna_no: The antenna number being observed
         last_acc_n: The last known accumulation count to wait for new data
         sub_dir_count: Counter for subdirectory numbers
         run_dir: Parent directory name for this observing run (optional)
@@ -177,19 +201,26 @@ def save_all_data(fpga, switch_value, last_acc_n, sub_dir_count, run_dir):
     t_2 = time.time()
     if SAVE_EACH_ACC:
         # Save each individual accumulation
-        acc_n = get_acc_cnt(fpga, last_acc_n)
+        acc_n, _ = get_acc_cnt(fpga, last_acc_n)
         last_acc_n = acc_n
 
         s, cnt = get_vacc_data(fpga)
         dataDict["spectrum"] = s
-        filename = write_filename(switch_value, cnt)
+        filename = write_filename(switch_value, cnt, antenna_no)
         if SAVE_DATA:
-            sub_dir_count = save_data(dataDict, filename, sub_dir_count, run_dir)
+            sub_dir_count, current_subdir = save_data(
+                dataDict,
+                filename,
+                sub_dir_count,
+                current_subdir,
+                run_dir,
+                create_new_subdir,
+            )
 
     else:
         spectra = {}
         while len(spectra) < 3:
-            acc_n = get_acc_cnt(fpga, acc_n)
+            acc_n, _ = get_acc_cnt(fpga, last_acc_n)
             last_acc_n = acc_n
             
             s, cnt = get_vacc_data(fpga)
@@ -202,9 +233,16 @@ def save_all_data(fpga, switch_value, last_acc_n, sub_dir_count, run_dir):
 
         dataDict["spectrum"] = sum_spectrum(spectra_list)
         # dataDict["nspectra"] = len(clean_spectra)
-        filename = write_filename(switch_value, 'average')
+        filename = write_filename(switch_value, 'average', antenna_no)
         if SAVE_DATA:
-            sub_dir_count = save_data(dataDict, filename, sub_dir_count, run_dir)
+            sub_dir_count, current_subdir = save_data(
+                dataDict,
+                filename,
+                sub_dir_count,
+                current_subdir,
+                run_dir,
+                create_new_subdir,
+            )
         
         print(f"Saved averaged spectrum for switch state {switch_value} with accumulation count {cnt}.")
         print(dataDict["switch state"])
@@ -214,7 +252,7 @@ def save_all_data(fpga, switch_value, last_acc_n, sub_dir_count, run_dir):
     # print(f'save_all_data: {t_2-t_1}, {t_3-t_2}, {t_4-t_3}, {t_5-t_4}, {t_6-t_5}')
     print(f'save_all_data: {t_2-t_1}, {t_6-t_2}')
 
-    return dataDict, filename, sub_dir_count, last_acc_n
+    return dataDict, filename, sub_dir_count, last_acc_n, current_subdir
 
 def get_sub_directory(parent_dir_path, sub_dir_count):
     """
