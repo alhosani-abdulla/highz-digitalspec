@@ -1,4 +1,5 @@
 import socket
+import struct
 import subprocess
 import time
 import os
@@ -7,7 +8,7 @@ import numpy as np
 import casperfpga
 from datetime import datetime, timezone
 
-from vars import FPGA_IP, CONFIG_PATH, ACC_LENGTH
+from vars import *
 import rcal
 
 # Helper function to work around casperfpga RFDC status parsing bug
@@ -59,10 +60,11 @@ def get_adc_status(adc):
     except Exception as e:
         return f"Could not read ADC status: {e}\n"
 
-
-def initialize_fpga():
+def initialize_fpga() -> tuple[casperfpga.CasperFpga, casperfpga.RFDC]:
     """
-    Initialize the FPGA and ADC, program the bitstream, and set up clocks.
+    Initialize the FPGA and ADC, gpio switch to state 0, discover FPGA address, 
+    program the bitstream, and set up clocks.
+
     Returns the fpga and adc objects.
     """
     print(datetime.fromtimestamp(time.time(), tz=timezone.utc))
@@ -120,7 +122,6 @@ def initialize_fpga():
     fpga.write_int('acc_len', ACC_LENGTH)
     print('Initialization complete. Taking data...')
     return fpga, adc
-
 
 def discover_fpga_address(hardcoded_ip=FPGA_IP, hostname_hint='rfsoc', timeout=5):
     """
@@ -235,28 +236,50 @@ def discover_fpga_address(hardcoded_ip=FPGA_IP, hostname_hint='rfsoc', timeout=5
 
     return None
 
-def print_acc_cnt(fpga, last_acc_n, repeat=30):
-    acc_n = fpga.read_uint('acc_cnt')
-    if acc_n > last_acc_n:
-        last_acc_n = acc_n
+def get_vacc_data(fpga):
+    """
+    Read accumulated vector data from FPGA and interleave channels.
+    
+    Parameters:
+        fpga: FPGA object for reading data
+        
+    Returns:
+        tuple: (interleaved_spectrum, accumulation_count)
+    """
+    half_nfft = NFFT // 2
+    samples_per_channel = half_nfft // NCHANNELS
+    channel_data = np.zeros((NCHANNELS, samples_per_channel))
 
-    c = 1
-    while acc_n == last_acc_n:
+    start_time = time.time()
+    for channel_idx in range(NCHANNELS):
+        raw_bytes = fpga.read('q{:d}'.format(channel_idx + 1), samples_per_channel * 8, 0)
+        channel_data[channel_idx, :] = struct.unpack('>{:d}Q'.format(samples_per_channel), raw_bytes)
+
+    interleaved_spectrum = []
+    for sample_idx in range(samples_per_channel):
+        for channel_idx in range(NCHANNELS):
+            interleaved_spectrum.append(channel_data[channel_idx, sample_idx])
+    
+    print(f'data read time: {time.time() - start_time}')
+
+    return interleaved_spectrum, fpga.read_uint('acc_cnt')
+
+def get_acc_cnt(fpga, last_acc_n):
+    """Wait for the FPGA to update the accumulation count, indicating new data is ready.
+    
+    Parameters:
+        fpga: FPGA object to read from
+        last_acc_n: The last known accumulation count to compare against.
+        
+    Returns:
+        tuple: (new_acc_n, loop_count) where new_acc_n is the updated accumulation count and 
+        loop_count is the number of iterations performed"""
+    acc_n = fpga.read_uint('acc_cnt')
+    c = 0
+    while acc_n <= last_acc_n:
         acc_n = fpga.read_uint('acc_cnt')
         c += 1
 
-    c = 0
-    start_time = time.time()
-    while c < repeat:
-        current_cnt = fpga.read_uint('acc_cnt')
-        current_time = time.time()
-        if current_cnt > acc_n:
-            increment_time = current_time - start_time
-            print(f'Time for increment: {increment_time} seconds')
-
-            start_time = current_time
-            acc_n = current_cnt
-            c += 1
     print(f'Final acc_n: {acc_n}')
-    return acc_n
+    return acc_n, c
 
