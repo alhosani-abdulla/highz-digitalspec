@@ -16,7 +16,7 @@ BASE_PATH = '/media/peterson'  # Path to external storage for data
 FPGA_IP = '169.254.2.181'
 
 # Default antenna identifier (update as needed)
-ANTENNA = '1'
+ANTENNA = '4'
 
 # FFT parameters
 ACC_LENGTH = 8750 * 2        # Accumulation length (see notes below)

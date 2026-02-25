@@ -68,8 +68,6 @@ def main():
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='high-z digital spectrometer')
-    parser.add_argument('--antenna', type=int, help="Antenna Index (1-4)",
-                        required=True)
     parser.add_argument('--state', default=None, type=int,
                         help='switch state (0-10)')
     parser.add_argument('--run_dir', default=None,
@@ -98,7 +96,7 @@ def main():
                 _, _, sub_dir_count, acc_n, current_subdir = save_all_data(
                     fpga,
                     switch_value=input_state,
-                    antenna_no=args.antenna,
+                    antenna_no=ANTENNA,
                     last_acc_n=acc_n,
                     sub_dir_count=sub_dir_count,
                     current_subdir=current_subdir,
@@ -121,7 +119,7 @@ def main():
 
                 for n in range(spectra_n):
                     _, _, sub_dir_count, acc_n, current_subdir = save_all_data(
-                        fpga, switch_value=s, antenna_no=args.antenna, 
+                        fpga, switch_value=s, antenna_no=ANTENNA, 
                         sub_dir_count=sub_dir_count,
                         last_acc_n=acc_n,
                         current_subdir=current_subdir,
@@ -134,7 +132,7 @@ def main():
             rcal.gpio_switch(state, SWITCH_DELAY)
             for cnt in range(ANT_ACC_N):
                 _, _, sub_dir_count, acc_n, current_subdir = save_all_data(
-                    fpga, switch_value=state, antenna_no=args.antenna, 
+                    fpga, switch_value=state, antenna_no=ANTENNA, 
                     sub_dir_count=sub_dir_count,
                     last_acc_n=acc_n,
                     current_subdir=current_subdir,
