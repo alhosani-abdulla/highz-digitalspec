@@ -275,11 +275,12 @@ def get_acc_cnt(fpga, last_acc_n):
         tuple: (new_acc_n, loop_count) where new_acc_n is the updated accumulation count and 
         loop_count is the number of iterations performed"""
     acc_n = fpga.read_uint('acc_cnt')
-    c = 0
-    while acc_n <= last_acc_n:
+    if acc_n > last_acc_n: 
+        last_acc_n = acc_n
+
+    c = 1
+    while acc_n == last_acc_n:
         acc_n = fpga.read_uint('acc_cnt')
         c += 1
-
-    print(f'Final acc_n: {acc_n}')
+    
     return acc_n, c
-
