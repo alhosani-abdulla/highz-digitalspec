@@ -1,7 +1,7 @@
 # Custom aliases for HighZ Digital Spectrometer Control
 
 # Run the spectrometer using pipenv
-alias TakeSpecs='cd ~/highz-digitalspec && pipenv run python src/run_spectrometer.py --antenna "$@"'
+alias TakeSpecs='cd ~/highz-digitalspec && pipenv run python src/run_spectrometer.py'
 
 # Navigate to the data storage directory (update path as needed)
 alias GetSpecs='cd /media/peterson/INDURANCE'
