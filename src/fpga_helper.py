@@ -9,6 +9,7 @@ import casperfpga
 from datetime import datetime, timezone
 
 from vars import *
+from sys_monitor import SystemHealthMonitor
 import rcal
 
 # Helper function to work around casperfpga RFDC status parsing bug
@@ -60,7 +61,7 @@ def get_adc_status(adc):
     except Exception as e:
         return f"Could not read ADC status: {e}\n"
 
-def initialize_fpga() -> tuple:
+def initialize_fpga(max_retries=5) -> tuple:
     """
     Initialize the FPGA and ADC, gpio switch to state 0, discover FPGA address, 
     program the bitstream, and set up clocks.
@@ -71,15 +72,15 @@ def initialize_fpga() -> tuple:
     rcal.gpio_switch(0, 2)
 
     # Discover FPGA address with retries
-    max_retries = 5
     retry_delay = 5  # seconds
     fpga_addr = None
+    discovered = False
 
     for attempt in range(max_retries):
         print(f"\n=== FPGA Connection Attempt {attempt + 1}/{max_retries} ===")
-        fpga_addr = discover_fpga_address()
+        fpga_addr, discovered = discover_fpga_address()
 
-        if fpga_addr:
+        if discovered:
             print(f"✓ Found FPGA at {fpga_addr}")
             break
 
@@ -87,17 +88,24 @@ def initialize_fpga() -> tuple:
             print(f"✗ FPGA not found. Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
 
-    if not fpga_addr:
+    if not discovered:
         print("✗ Failed to discover FPGA after all attempts")
         print("Please check:")
         print("  - FPGA is powered on and connected via ethernet")
         print("  - Network connection is active")
         print("  - Firewall is not blocking KATCP port 7147")
+        print("------------------------------------------------------------------")
+        print("Running system diagnostic tool to check for common issues...")
+        monitor = SystemHealthMonitor()
+        monitor.collect_metrics()
+        monitor.print_report(verbose=True)
+        print("------------------------------------------------------------------")
+        print("Rebooting system in 3 minutes to attempt recovery. Please check hardware connections and logs after reboot.")
         time.sleep(180)
         os.system('sudo reboot')
 
     try:
-        print(f'Running Script ...')
+        print('Connecting to FPGA and programming bitstream...')
         # Connect to the FPGA using discovered address
         fpga = casperfpga.CasperFpga(fpga_addr)
         fpga.upload_to_ram_and_program(CONFIG_PATH)
@@ -113,6 +121,11 @@ def initialize_fpga() -> tuple:
 
     except Exception as e:
         print(f'An error occurred during FPGA initialization: {e}')
+        print("Running system diagnostic tool to check for common issues...")
+        monitor = SystemHealthMonitor()
+        monitor.collect_metrics()
+        monitor.print_report(verbose=True)
+        print("Rebooting system in 3 minutes to attempt recovery. Please check hardware connections and logs after reboot.")
         time.sleep(180)
         os.system('sudo reboot')
 
@@ -138,7 +151,9 @@ def discover_fpga_address(hardcoded_ip=FPGA_IP, hostname_hint='rfsoc', timeout=5
             timeout (int): Timeout in seconds for connection attempts
 
     Returns:
-            str: Working IP address for FPGA, or None if all methods fail
+            tuple: (working_ip, discovered_flag)
+                - working_ip (str | None): Working IP address for FPGA, or None if all methods fail
+                - discovered_flag (bool): True if discovery succeeded, False otherwise
     """
 
     # Build list of hostnames to try
@@ -162,7 +177,7 @@ def discover_fpga_address(hardcoded_ip=FPGA_IP, hostname_hint='rfsoc', timeout=5
                 socket.create_connection(
                     (resolved_ip, 7147), timeout=timeout)  # KATCP default port
                 print(f"✓ FPGA responsive at {resolved_ip}")
-                return resolved_ip
+                return resolved_ip, True
             except (socket.timeout, ConnectionRefusedError, OSError):
                 print(f"✗ {resolved_ip} not responding on KATCP port")
         except socket.gaierror:
@@ -173,7 +188,7 @@ def discover_fpga_address(hardcoded_ip=FPGA_IP, hostname_hint='rfsoc', timeout=5
     try:
         socket.create_connection((hardcoded_ip, 7147), timeout=timeout)
         print(f"✓ FPGA responsive at {hardcoded_ip}")
-        return hardcoded_ip
+        return hardcoded_ip, True
     except (socket.timeout, ConnectionRefusedError, OSError) as e:
         print(f"✗ Could not connect to {hardcoded_ip}: {e}")
 
@@ -225,7 +240,7 @@ def discover_fpga_address(hardcoded_ip=FPGA_IP, hostname_hint='rfsoc', timeout=5
                             socket.create_connection(
                                 (ipv6_addr, 7147, 0, iface), timeout=timeout)
                             print(f"✓ FPGA responsive at {ipv6_addr}")
-                            return ipv6_addr
+                            return ipv6_addr, True
                         except (socket.timeout, ConnectionRefusedError, OSError, TypeError):
                             # TypeError occurs if socket doesn't support interface scope this way
                             continue
@@ -234,7 +249,7 @@ def discover_fpga_address(hardcoded_ip=FPGA_IP, hostname_hint='rfsoc', timeout=5
     except Exception as e:
         print(f"✗ IPv6 discovery failed: {e}")
 
-    return None
+    return None, False
 
 def get_vacc_data(fpga):
     """
